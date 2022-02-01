@@ -24,7 +24,7 @@ Fields:
     all_states_stats::Dict{AbstractVector{S},PerStateMPStats}
         Maps each joint state in the tree to the per-state statistics.
 """
-mutable struct MaxPlusStatisticsWithCost{S} <: CoordinationStatistics
+mutable struct MaxPlusWithCostStatistics{S} <: CoordinationStatistics
     adjmatgraph::SimpleGraph
     message_iters::Int64
     message_norm::Bool
@@ -36,11 +36,11 @@ mutable struct MaxPlusStatisticsWithCost{S} <: CoordinationStatistics
     agent_interaction_cost::Matrix{Float64}
 end
 
-function clear_statistics!(mp_stats::MaxPlusStatisticsWithCost)
+function clear_statistics!(mp_stats::MaxPlusWithCostStatistics)
     empty!(mp_stats.all_states_stats)
 end
 
-function update_statistics!(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusStatisticsWithCost{S}},
+function update_statistics!(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusWithCostStatistics{S}},
                             s::S, ucb_action::A, q::AbstractFloat) where {S,A}
 
     update_statistics!(mdp, tree, s, ucb_action, ones(typeof(q), n_agents(mdp)) * q)
@@ -49,7 +49,7 @@ end
 """
 Take the q-value from the MCTS step and distribute the updates across the per-node and per-edge q-stats as per the formula in our paper.
 """
-function update_statistics!(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusStatisticsWithCost{S}},
+function update_statistics!(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusWithCostStatistics{S}},
                             s::S, ucb_action::A, q::AbstractVector{Float64}) where {S,A}
 
     state_stats = tree.coordination_stats.all_states_stats[s]
@@ -88,7 +88,7 @@ function update_statistics!(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusStat
 
 end
 
-function init_statistics!(tree::FVMCTSTree{S,A,MaxPlusStatisticsWithCost{S}}, planner::FVMCTSPlanner,
+function init_statistics!(tree::FVMCTSTree{S,A,MaxPlusWithCostStatistics{S}}, planner::FVMCTSPlanner,
                           s::S) where {S,A}
 
     n_agents = length(s)
@@ -134,9 +134,9 @@ function init_statistics!(tree::FVMCTSTree{S,A,MaxPlusStatisticsWithCost{S}}, pl
 end
 
 """
-Runs Max-Plus at the current state using the per-state MaxPlusStatisticsWithCost to compute the best joint action with either or both of node-wise and edge-wise exploration bonus. Rounds of message passing are followed by per-node maximization.
+Runs Max-Plus at the current state using the per-state MaxPlusWithCostStatistics to compute the best joint action with either or both of node-wise and edge-wise exploration bonus. Rounds of message passing are followed by per-node maximization.
 """
-function coordinate_action(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusStatisticsWithCost{S}}, s::S,
+function coordinate_action(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusWithCostStatistics{S}}, s::S,
                            exploration_constant::Float64=0.0, node_id::Int64=0) where {S,A}
 
     state_stats = lock(tree.lock) do

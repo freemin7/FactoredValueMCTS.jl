@@ -97,6 +97,7 @@ include(joinpath("fvmcts", "action_coordination", "maxplus.jl"))
 export
     FVMCTSSolver,
     MaxPlus,
+    MaxPlusWithCost,
     VarEl
 
 
