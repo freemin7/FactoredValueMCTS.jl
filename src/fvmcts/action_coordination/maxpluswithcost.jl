@@ -32,7 +32,7 @@ mutable struct MaxPlusWithCostStatistics{S} <: CoordinationStatistics
     node_exploration::Bool
     edge_exploration::Bool # NOTE: One of this or node exploration must be true
     all_states_stats::Dict{S,PerStateMPStats}
-    agent_action_cost::Vector{Vector{Float64}}
+    agent_action_cost::Vector{Float64}
     agent_interaction_cost::Matrix{Float64}
 end
 
@@ -166,7 +166,14 @@ function coordinate_action(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusWithC
     state_total_n = lock(tree.lock) do
         (node_id > 0) ? tree.total_n[node_id] : 1
     end
+    
+    agent_action_idx = Vector{Int64}(undef, n_agents) #might also be Int not sure if you run into a problem here on a 32 bit system i chose wrong.
 
+    ucb_action = last_actionindex(mdp)
+
+    for i in 1:n_agents ## is caching worth the extra allocations?
+   	 agent_action_idx[i] = ucb_action[i]
+    end
 
     # Iterate over passes
     for t = 1:k
@@ -188,6 +195,10 @@ function coordinate_action(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusWithC
 
             if tree.coordination_stats.use_agent_utils
                 @views q_values[i, :] = state_stats.agent_action_q[i, :]/n_agents
+            end
+            q_values[i, :] .-= tree.coordination_stats.agent_action_cost[agent_action_idx[i]] 
+            for j = 1:n_agents
+                q_values[i, j] -= tree.coordination_stats.agent_interaction_cost[agent_action_idx[i],agent_action_idx[j]] 
             end
             for n in nbrs
                 if Edge(i,n) in edgelist # use backward message
@@ -238,54 +249,4 @@ function coordinate_action(mdp::JointMDP{S,A}, tree::FVMCTSTree{S,A,MaxPlusWithC
     end
 
     return best_action
-end
-
-function perform_message_passing!(fwd_messages::AbstractArray{F,2}, bwd_messages::AbstractArray{F,2},
-                                  mdp, all_agent_actions,
-                                  adjgraphmat, state_agent_actions, n_edges::Int, q_values, message_norm,
-                                  exploration_constant, state_stats, state_total_n) where {F}
-    # Iterate over edges
-    fwd_messages_old = deepcopy(fwd_messages)
-    bwd_messages_old = deepcopy(bwd_messages)
-    for (e_idx, e) in enumerate(edges(adjgraphmat))
-
-        i = e.src
-        j = e.dst
-        edge_tup_indices = LinearIndices(Tuple(1:length(all_agent_actions[c]) for c in (i,j)))
-
-        # forward: maximize sender
-        # NOTE: Can't do enumerate as action set might be smaller
-        # Need to look up global index of agent action and use that
-        # Need to break up vectorized loop
-        @inbounds for aj in state_agent_actions[j]
-            aj_idx = agent_actionindex(mdp, j, aj)
-            fwd_message_vals = zeros(length(state_agent_actions[i]))
-            # TODO: Should we use inbounds here again?
-            @inbounds for (idx, ai) in enumerate(state_agent_actions[i])
-                ai_idx = agent_actionindex(mdp, i, ai)
-                fwd_message_vals[idx] = q_values[i, ai_idx] - bwd_messages_old[e_idx, ai_idx] + state_stats.edge_action_q[e_idx, edge_tup_indices[ai_idx, aj_idx]]/n_edges + exploration_constant * sqrt( (log(state_total_n + 1.0)) / (state_stats.edge_action_n[e_idx, edge_tup_indices[ai_idx, aj_idx]] + 1) )
-            end
-            fwd_messages[e_idx, aj_idx] = maximum(fwd_message_vals)
-        end
-
-        @inbounds for ai in state_agent_actions[i]
-            ai_idx = agent_actionindex(mdp, i, ai)
-            bwd_message_vals = zeros(length(state_agent_actions[j]))
-            @inbounds for (idx, aj) in enumerate(state_agent_actions[j])
-                aj_idx = agent_actionindex(mdp, j, aj)
-                bwd_message_vals[idx] = q_values[j, aj_idx] - fwd_messages_old[e_idx, aj_idx] + state_stats.edge_action_q[e_idx, edge_tup_indices[ai_idx, aj_idx]]/n_edges + exploration_constant * sqrt( (log(state_total_n + 1.0))/ (state_stats.edge_action_n[e_idx, edge_tup_indices[ai_idx, aj_idx]] + 1) )
-            end
-            bwd_messages[e_idx, ai_idx] = maximum(bwd_message_vals)
-        end
-
-        # Normalize messages for better convergence
-        if message_norm
-            @views fwd_messages[e_idx, :] .-= sum(fwd_messages[e_idx, :])/length(fwd_messages[e_idx, :])
-            @views bwd_messages[e_idx, :] .-= sum(bwd_messages[e_idx, :])/length(bwd_messages[e_idx, :])
-        end
-
-    end # (idx,edges) in enumerate(edges)
-
-    # Return norm of message difference
-    return norm(fwd_messages - fwd_messages_old), norm(bwd_messages - bwd_messages_old)
 end
